@@ -1,0 +1,8 @@
+# Alembic configuration file template
+# 
+# This is a placeholder for Alembic configuration.
+# To initialize Alembic, run:
+# alembic init alembic
+# 
+# This will generate the proper alembic.ini and env.py files
+# with migration templates.

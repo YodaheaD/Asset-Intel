@@ -1,0 +1,55 @@
+# Environment Variables
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Python specific
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# FastAPI specific
+*.pid
+instance/
+.webassets-cache
+
+# IDE related files
+.vscode/
+.idea/
+
+# Testing and coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Database files
+*.db
+*.sqlite3
+*.sqlite
+
+# Logs and OS files
+*.log
+logs/
+.DS_Store
+Thumbs.db
+*~
