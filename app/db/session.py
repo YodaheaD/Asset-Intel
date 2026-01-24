@@ -13,7 +13,10 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
 )
 
-# THIS IS THE FIX
+# Alias for scripts
+async_session = AsyncSessionLocal
+
+# FastAPI dependency
 async def get_db() -> AsyncSession:
     async with AsyncSessionLocal() as session:
         yield session

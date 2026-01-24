@@ -1,4 +1,4 @@
-from sqlalchemy import String, Enum, DateTime
+from sqlalchemy import String, Enum, DateTime, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
@@ -64,4 +64,10 @@ class Asset(Base):
     processed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+    org_id: Mapped[uuid.UUID] = mapped_column(
+    UUID(as_uuid=True),
+    ForeignKey("organizations.id"),
+    nullable=False,
+    index=True,
     )
