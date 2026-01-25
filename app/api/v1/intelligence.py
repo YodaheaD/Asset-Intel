@@ -1,5 +1,5 @@
 from fastapi import APIRouter, Depends, BackgroundTasks
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from uuid import UUID
 from typing import List
@@ -35,33 +35,29 @@ async def analyze_image_metadata(
 @router.get("/assets/{asset_id}/intelligence/runs")
 async def get_asset_intelligence_runs(
     asset_id: UUID,
-    db = Depends(get_async_db),
+    db: AsyncSession = Depends(get_async_db),
     org_id: UUID = Depends(get_current_org_id),
 ):
-    """Get all intelligence runs for a specific asset"""
-    async with db as session:
-        result = await session.execute(
-            select(IntelligenceRun)
-            .where(
-                IntelligenceRun.asset_id == asset_id,
-                IntelligenceRun.org_id == org_id
-            )
-            .order_by(IntelligenceRun.created_at.desc())
+    result = await db.execute(
+        select(IntelligenceRun)
+        .where(
+            IntelligenceRun.asset_id == asset_id,
+            IntelligenceRun.org_id == org_id,
         )
-        runs = result.scalars().all()
-        
-        return [
-            {
-                "id": run.id,
-                "asset_id": run.asset_id,
-                "processor_name": run.processor_name,
-                "processor_version": run.processor_version,
-                "status": run.status,
-                "error_message": run.error_message,
-                "created_at": run.created_at,
-                "completed_at": run.completed_at,
-            }
-            for run in runs
-        ]
+        .order_by(IntelligenceRun.created_at.desc())
+    )
+    runs = result.scalars().all()
 
-
+    return [
+        {
+            "id": run.id,
+            "asset_id": run.asset_id,
+            "processor_name": run.processor_name,
+            "processor_version": run.processor_version,
+            "status": run.status,
+            "error_message": run.error_message,
+            "created_at": run.created_at,
+            "completed_at": run.completed_at,
+        }
+        for run in runs
+    ]
