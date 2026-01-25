@@ -1,5 +1,8 @@
 import uuid
 from datetime import datetime
+from sqlalchemy.orm import Mapped, mapped_column
+
+from sympy import Integer
 
 from sqlalchemy import (
     Column,
@@ -53,6 +56,14 @@ class IntelligenceRun(Base):
         DateTime(timezone=True),
         nullable=True
     )
+
+    # Cost attribution per run
+    estimated_cost_cents: Mapped[int] = mapped_column(
+    Integer,
+    nullable=False,
+    default=0,
+)
+
 
     # Relationships
     results = relationship(

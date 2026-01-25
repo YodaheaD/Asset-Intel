@@ -9,6 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.intelligence_run import IntelligenceRun
 from app.services.intelligence_processors import PROCESSORS
+from app.services.quota_service import enforce_quota
+from app.services.usage_service import record_usage
+from app.core.pricing import estimate_cost
 
 
 def _should_create_new_run(
@@ -68,6 +71,9 @@ async def enqueue_processor_run(
     if latest and not _should_create_new_run(latest.status, force=force, retry=retry):
         return latest
 
+    # Enforce quota before creating a new run
+    await enforce_quota(db, org_id=org_id)
+
     # Create a new run
     run = IntelligenceRun(
         org_id=org_id,
@@ -99,8 +105,31 @@ async def run_processor_in_background(run_id: UUID, processor_name: str) -> None
     spec = PROCESSORS[processor_name]
 
     async with AsyncSessionLocal() as db:
+        # Get the run object to access org_id
+        run_result = await db.execute(
+            select(IntelligenceRun).where(IntelligenceRun.id == run_id)
+        )
+        run = run_result.scalar_one()
+        
         try:
             await spec.handler(db, run_id)
+            
+            # Record usage and cost after successful execution
+            cost = estimate_cost(processor_name)
+            
+            await record_usage(
+                db,
+                org_id=run.org_id,
+                cost_cents=cost,
+            )
+            
+            await db.execute(
+                update(IntelligenceRun)
+                .where(IntelligenceRun.id == run_id)
+                .values(estimated_cost_cents=cost)
+            )
+            await db.commit()
+            
         except Exception as e:
             await db.rollback()  # <-- important
             
