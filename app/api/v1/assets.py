@@ -4,7 +4,7 @@ from app.services.intelligence import process_asset
 
 from app.schemas.asset import AssetCreate, AssetRead
 from app.services.asset_service import AssetService
-from app.db.session import get_db
+from app.db.session import get_async_db 
 from sqlalchemy import select
 from app.models.asset import Asset
 from app.core.auth import get_current_org
@@ -19,7 +19,7 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 #     asset_in: AssetCreate,
 #     background_tasks: BackgroundTasks,
 #     org_id = Depends(get_current_org),
-#     db: AsyncSession = Depends(get_db),
+#     db: AsyncSession = Depends(get_async_db ),
 # ):
 #     asset = await AssetService.create_asset(
 #         db,
@@ -33,7 +33,7 @@ router = APIRouter(prefix="/assets", tags=["assets"])
 @router.post("", response_model=AssetRead)
 async def create_asset(
     asset_in: AssetCreate,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db ),
     ctx: RequestContext = Depends(get_request_context),  # <- injected
 ):
     # tenant_id, role, auth_type come from ctx
@@ -51,7 +51,7 @@ async def create_asset(
 )
 async def get_asset(
     asset_id: str,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db ),
     ctx: RequestContext = Depends(get_request_context),  # <- injected
 ):
     result = await db.execute(

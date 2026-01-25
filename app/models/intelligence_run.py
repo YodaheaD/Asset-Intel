@@ -1,0 +1,62 @@
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    DateTime,
+    String,
+    ForeignKey,
+    Text
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
+
+from app.db.base import Base
+
+
+class IntelligenceRun(Base):
+    __tablename__ = "intelligence_runs"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+
+    asset_id = Column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True
+    )
+
+    org_id = Column(
+        UUID(as_uuid=True),
+        nullable=False,
+        index=True
+    )
+
+    processor_name = Column(String(100), nullable=False)
+    processor_version = Column(String(50), nullable=False)
+
+    status = Column(
+        String(20),
+        nullable=False,
+        index=True
+    )  # pending | running | completed | failed
+
+    error_message = Column(Text, nullable=True)
+
+    created_at = Column(
+        DateTime(timezone=True),
+        default=datetime.utcnow,
+        nullable=False
+    )
+
+    completed_at = Column(
+        DateTime(timezone=True),
+        nullable=True
+    )
+
+    # Relationships
+    results = relationship(
+        "IntelligenceResult",
+        back_populates="run",
+        cascade="all, delete-orphan"
+    )

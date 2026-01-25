@@ -9,7 +9,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.main import app
 from app.db.base import Base
-from app.db.session import get_db
+from app.db.session import get_async_db 
 
 
 # Create test database
@@ -34,7 +34,7 @@ def override_get_db():
 
 
 # Override the dependency
-app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[get_async_db ] = override_get_db
 
 
 @pytest.fixture(scope="session")

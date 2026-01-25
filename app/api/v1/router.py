@@ -1,6 +1,9 @@
 from fastapi import APIRouter
-from app.api.v1 import assets, health
+from app.api.v1 import assets, health, intelligence, intelligence_runs, intelligence_query
 
 router = APIRouter()
 router.include_router(health.router)
 router.include_router(assets.router)
+router.include_router(intelligence.router, tags=["intelligence"])
+router.include_router(intelligence_runs.router, tags=["intelligence"])
+router.include_router(intelligence_query.router, tags=["intelligence"])

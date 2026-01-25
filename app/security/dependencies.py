@@ -1,12 +1,12 @@
 from fastapi import Depends, Header
 from sqlalchemy.ext.asyncio import AsyncSession
-from app.db.session import get_db
+from app.db.session import get_async_db 
 from app.security.context import RequestContext
 from app.security.api_key import validate_api_key
 
 async def get_request_context(
     x_api_key: str = Header(..., description="API Key for authentication"),
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_async_db ),
 ) -> RequestContext:
     """
     FastAPI dependency that validates API key and returns a typed RequestContext.
