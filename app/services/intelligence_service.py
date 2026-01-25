@@ -1,76 +1,113 @@
-from sqlalchemy.orm import Session
+from __future__ import annotations
+
 from uuid import UUID
 from datetime import datetime
 
-from app.models.asset import Asset
+from fastapi import BackgroundTasks
+from sqlalchemy import select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from app.models.intelligence_run import IntelligenceRun
-from app.models.intelligence_result import IntelligenceResult
-from app.services.intelligence_processors.image_metadata import extract_image_metadata
+from app.services.intelligence_processors import PROCESSORS
 
 
-async def enqueue_image_metadata(
-    db: Session,
-    asset_id: UUID,
+def _should_create_new_run(
+    latest_status: str,
+    *,
+    force: bool,
+    retry: bool,
+) -> bool:
+    """
+    Default behavior: idempotent
+      - pending/running -> reuse existing
+      - completed -> reuse existing
+      - failed -> reuse existing unless retry or force
+    """
+    if force:
+        return True
+
+    if latest_status in ("pending", "running", "completed"):
+        return False
+
+    if latest_status == "failed":
+        return retry  # only create a new one if retry=True
+
+    # unknown status: safest is to avoid duplicating
+    return False
+
+
+async def enqueue_processor_run(
+    db: AsyncSession,
+    *,
     org_id: UUID,
-    background_tasks
-):
-    run = IntelligenceRun(
-        asset_id=asset_id,
-        org_id=org_id,
-        processor_name="image-metadata",
-        processor_version="1.0.0",
-        status="pending"
+    asset_id: UUID,
+    processor_name: str,
+    background_tasks: BackgroundTasks,
+    force: bool = False,
+    retry: bool = False,
+) -> IntelligenceRun:
+    if processor_name not in PROCESSORS:
+        raise ValueError(f"Unknown processor: {processor_name}")
+
+    spec = PROCESSORS[processor_name]
+
+    # Find latest run for this (org, asset, processor, version)
+    latest_res = await db.execute(
+        select(IntelligenceRun)
+        .where(
+            IntelligenceRun.org_id == org_id,
+            IntelligenceRun.asset_id == asset_id,
+            IntelligenceRun.processor_name == spec.name,
+            IntelligenceRun.processor_version == spec.version,
+        )
+        .order_by(IntelligenceRun.created_at.desc())
+        .limit(1)
     )
+    latest = latest_res.scalar_one_or_none()
+
+    if latest and not _should_create_new_run(latest.status, force=force, retry=retry):
+        return latest
+
+    # Create a new run
+    run = IntelligenceRun(
+        org_id=org_id,
+        asset_id=asset_id,
+        processor_name=spec.name,
+        processor_version=spec.version,
+        status="pending",
+        error_message=None,
+        created_at=datetime.utcnow(),
+    )
+
     db.add(run)
     await db.commit()
     await db.refresh(run)
 
-    background_tasks.add_task(
-        process_image_metadata,
-        run.id
-    )
+    # Kick off background execution with a *fresh* db session (safer)
+    background_tasks.add_task(run_processor_in_background, run.id, spec.name)
 
     return run
 
 
-async def process_image_metadata(run_id: UUID):
-    from app.db.session import AsyncSessionLocal
-    from sqlalchemy import select
+async def run_processor_in_background(run_id: UUID, processor_name: str) -> None:
+    """
+    BackgroundTasks runs after response. We create a new AsyncSession
+    to avoid reusing request-scoped session.
+    """
+    from app.db.session import AsyncSessionLocal  # async_sessionmaker
+
+    spec = PROCESSORS[processor_name]
 
     async with AsyncSessionLocal() as db:
-        run = None
         try:
-            # Get the intelligence run
-            result = await db.execute(select(IntelligenceRun).where(IntelligenceRun.id == run_id))
-            run = result.scalar_one_or_none()
-            if not run:
-                raise RuntimeError("Intelligence run not found")
-            run.status = "running"
-            await db.commit()
-
-            # Get the asset
-            result = await db.execute(select(Asset).where(Asset.id == run.asset_id))
-            asset = result.scalar_one_or_none()
-            if not asset:
-                raise RuntimeError("Asset not found")
-
-            metadata = extract_image_metadata(asset.source_uri)
-
-            result = IntelligenceResult(
-                run_id=run.id,
-                type="image_metadata",
-                data=metadata,
-                confidence=1.0
-            )
-
-            db.add(result)
-            run.status = "completed"
-            run.completed_at = datetime.utcnow()
-
-            await db.commit()
-
+            await spec.handler(db, run_id)
         except Exception as e:
-            if run:
-                run.status = "failed"
-                run.error_message = str(e)
-                await db.commit()
+            await db.rollback()  # <-- important
+            
+            # Mark run failed
+            await db.execute(
+                update(IntelligenceRun)
+                .where(IntelligenceRun.id == run_id)
+                .values(status="failed", error_message=str(e))
+            )
+            await db.commit()
