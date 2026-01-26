@@ -1,14 +1,18 @@
 import uuid
 from datetime import datetime
+
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import Integer, DateTime, String
+from sqlalchemy import String, DateTime
 
 from app.db.base import Base
 
 
-class OrgUsage(Base):
-    __tablename__ = "org_usage"
+class StripeEvent(Base):
+    """
+    Records Stripe webhook event IDs we've already processed (idempotency).
+    """
+    __tablename__ = "stripe_events"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -16,28 +20,16 @@ class OrgUsage(Base):
         default=uuid.uuid4,
     )
 
-    org_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
+    stripe_event_id: Mapped[str] = mapped_column(
+        String(255),
         nullable=False,
+        unique=True,
         index=True,
     )
 
-    period: Mapped[str] = mapped_column(
-        String(7),  # e.g. "2026-01"
+    event_type: Mapped[str] = mapped_column(
+        String(255),
         nullable=False,
-        index=True,
-    )
-
-    intelligence_runs: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
-    )
-
-    estimated_cost_cents: Mapped[int] = mapped_column(
-        Integer,
-        nullable=False,
-        default=0,
     )
 
     created_at: Mapped[datetime] = mapped_column(

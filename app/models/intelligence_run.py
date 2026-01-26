@@ -2,14 +2,13 @@ import uuid
 from datetime import datetime
 from sqlalchemy.orm import Mapped, mapped_column
 
-from sympy import Integer
-
 from sqlalchemy import (
     Column,
     DateTime,
     String,
     ForeignKey,
-    Text
+    Text,
+    Integer
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
@@ -62,7 +61,7 @@ class IntelligenceRun(Base):
     Integer,
     nullable=False,
     default=0,
-)
+    )
 
 
     # Relationships
