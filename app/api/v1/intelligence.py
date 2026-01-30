@@ -98,3 +98,30 @@ async def get_asset_intelligence_runs(
         }
         for run in runs
     ]
+
+    # FingerPrint Processor
+@router.post("/assets/{asset_id}/intelligence/fingerprint", status_code=202)
+async def analyze_fingerprint(
+    asset_id: UUID,
+    background_tasks: BackgroundTasks,
+    force: bool = Query(False),
+    retry: bool = Query(False),
+    db: AsyncSession = Depends(get_async_db),
+    org_id = Depends(get_current_org_id),
+):
+    run = await enqueue_processor_run(
+        db,
+        org_id=org_id,
+        asset_id=asset_id,
+        processor_name="asset-fingerprint",
+        background_tasks=background_tasks,
+        force=force,
+        retry=retry,
+    )
+
+    return {
+        "run_id": run.id,
+        "status": run.status,
+        "processor": run.processor_name,
+        "version": run.processor_version,
+    }
