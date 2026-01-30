@@ -12,6 +12,8 @@ from app.models.api_key import ApiKey
 from app.models.asset import Asset
 from app.models.intelligence_run import IntelligenceRun
 from app.models.intelligence_result import IntelligenceResult
+from app.models.org_usage import OrgUsage
+from app.models.stripe_event import StripeEvent
 
 
 async def create_all_tables() -> None:
