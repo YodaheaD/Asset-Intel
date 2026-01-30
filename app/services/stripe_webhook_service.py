@@ -13,6 +13,18 @@ async def already_processed(db: AsyncSession, stripe_event_id: str) -> bool:
     return res.scalar_one_or_none() is not None
 
 
-async def mark_processed(db: AsyncSession, stripe_event_id: str, event_type: str) -> None:
-    db.add(StripeEvent(stripe_event_id=stripe_event_id, event_type=event_type))
-    await db.commit()
+async def mark_processed(
+    db: AsyncSession,
+    stripe_event_id: str,
+    event_type: str,
+    stripe_event_created: int,
+) -> None:
+    db.add(
+        StripeEvent(
+            stripe_event_id=stripe_event_id,
+            event_type=event_type,
+            stripe_event_created=stripe_event_created,
+        )
+    )
+
+    # Dont commit here, commit inside the webhook handler after all processing is done

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, String, DateTime, Boolean, text
+from sqlalchemy import Column, String, DateTime, Boolean, text, BigInteger
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.sql import func
 from sqlalchemy.orm import validates
@@ -67,6 +67,18 @@ class Organization(Base):
         nullable=False,
         default="free",
     )
+    # phase 5 , step 2 addition
+    last_stripe_event_created: Mapped[int] = mapped_column(
+    BigInteger,
+    nullable=False,
+    default=0,
+)
+    
+    stripe_subscription_id: Mapped[str | None] = mapped_column(
+    String(255),
+    nullable=True,
+    index=True,
+)
 
     # -----------------------------
     # Auto-slug generation
