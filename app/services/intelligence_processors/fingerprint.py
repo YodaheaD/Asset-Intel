@@ -11,12 +11,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.asset import Asset
 from app.models.intelligence_run import IntelligenceRun
 from app.models.intelligence_result import IntelligenceResult
+from app.services.fingerprint_signature_service import _signature_from_fingerprint_data
 
 
-async def process_fingerprint_run(
-    db: AsyncSession,
-    run_id: UUID,
-) -> None:
+async def process_fingerprint_run(db: AsyncSession, run_id: UUID) -> None:
     # Load run
     run_res = await db.execute(
         select(IntelligenceRun).where(IntelligenceRun.id == run_id)
@@ -32,14 +30,12 @@ async def process_fingerprint_run(
     await db.commit()
 
     # Load asset
-    asset_res = await db.execute(
-        select(Asset).where(Asset.id == run.asset_id)
-    )
+    asset_res = await db.execute(select(Asset).where(Asset.id == run.asset_id))
     asset = asset_res.scalar_one()
 
     url = asset.source_uri
 
-    # --- Step 1: HEAD request (cheap) ---
+    # Step 1: HEAD (cheap)
     head = requests.head(url, timeout=15, allow_redirects=True)
     head.raise_for_status()
 
@@ -50,9 +46,9 @@ async def process_fingerprint_run(
 
     sha256 = None
 
-    # --- Step 2: Only download if fingerprint is incomplete ---
+    # Step 2: Only download if we don't have an ETag (or you could also require sha256 always)
     if not etag:
-        resp = requests.get(url, timeout=30)
+        resp = requests.get(url, timeout=30, stream=True)
         resp.raise_for_status()
 
         hasher = hashlib.sha256()
@@ -70,6 +66,15 @@ async def process_fingerprint_run(
         "sha256": sha256,
     }
 
+    # Compute + store signature on the run itself (Phase 6.2)
+    sig = _signature_from_fingerprint_data(data)
+    await db.execute(
+        update(IntelligenceRun)
+        .where(IntelligenceRun.id == run_id)
+        .values(input_fingerprint_signature=sig)
+    )
+    await db.commit()
+
     # Persist result
     result = IntelligenceResult(
         org_id=run.org_id,
@@ -85,9 +90,6 @@ async def process_fingerprint_run(
     await db.execute(
         update(IntelligenceRun)
         .where(IntelligenceRun.id == run_id)
-        .values(
-            status="completed",
-            completed_at=datetime.utcnow(),
-        )
+        .values(status="completed", completed_at=datetime.utcnow())
     )
     await db.commit()

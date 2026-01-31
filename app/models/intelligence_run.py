@@ -63,6 +63,14 @@ class IntelligenceRun(Base):
     default=0,
     )
 
+    # Phase 6.2
+    input_fingerprint_signature: Mapped[str | None] = mapped_column(
+    String(128),
+    nullable=True,
+    index=True,
+    )
+
+
 
     # Relationships
     results = relationship(

@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.intelligence_run import IntelligenceRun
 from app.services.intelligence_processors import PROCESSORS
+
 from app.services.quota_service import enforce_quota
-from app.services.usage_service import record_usage
 from app.core.pricing import estimate_cost
+from app.services.usage_service import record_usage
+from app.services.fingerprint_signature_service import get_latest_fingerprint_signature
 
 
 def _should_create_new_run(
@@ -54,7 +56,20 @@ async def enqueue_processor_run(
 
     spec = PROCESSORS[processor_name]
 
-    # Find latest run for this (org, asset, processor, version)
+    # Phase 4: enforce quotas BEFORE creating any new runs
+    await enforce_quota(db, org_id=org_id)
+
+    # Phase 6.2: compute "current" fingerprint signature for smart reprocessing
+    # - only for non-fingerprint processors
+    current_sig = None
+    if spec.name != "asset-fingerprint":
+        current_sig = await get_latest_fingerprint_signature(
+            db,
+            org_id=org_id,
+            asset_id=asset_id,
+        )
+
+    # Find latest run for (org, asset, processor, version)
     latest_res = await db.execute(
         select(IntelligenceRun)
         .where(
@@ -68,13 +83,20 @@ async def enqueue_processor_run(
     )
     latest = latest_res.scalar_one_or_none()
 
+    # Smart reuse logic:
+    # - If idempotency says "reuse", require signature match when we have a signature
     if latest and not _should_create_new_run(latest.status, force=force, retry=retry):
-        return latest
+        # If we don't know the fingerprint signature yet, fall back to old idempotency behavior
+        if current_sig is None:
+            return latest
 
-    # Enforce quota before creating a new run
-    await enforce_quota(db, org_id=org_id)
+        # Only reuse completed/pending/running run if it was created for the same input signature
+        if latest.input_fingerprint_signature == current_sig:
+            return latest
 
-    # Create a new run
+        # Otherwise: fingerprint changed => fall through to create a new run
+
+    # Create new run
     run = IntelligenceRun(
         org_id=org_id,
         asset_id=asset_id,
@@ -83,13 +105,15 @@ async def enqueue_processor_run(
         status="pending",
         error_message=None,
         created_at=datetime.utcnow(),
+        input_fingerprint_signature=current_sig if spec.name != "asset-fingerprint" else None,
+        estimated_cost_cents=0,  # will be set after success
     )
 
     db.add(run)
     await db.commit()
     await db.refresh(run)
 
-    # Kick off background execution with a *fresh* db session (safer)
+    # Kick off background execution with a fresh session
     background_tasks.add_task(run_processor_in_background, run.id, spec.name)
 
     return run
@@ -97,43 +121,43 @@ async def enqueue_processor_run(
 
 async def run_processor_in_background(run_id: UUID, processor_name: str) -> None:
     """
-    BackgroundTasks runs after response. We create a new AsyncSession
-    to avoid reusing request-scoped session.
+    BackgroundTasks runs after response. We create a new AsyncSession to avoid
+    reusing a request-scoped session.
     """
     from app.db.session import AsyncSessionLocal  # async_sessionmaker
 
+    if processor_name not in PROCESSORS:
+        # cannot process; nothing to do
+        return
+
     spec = PROCESSORS[processor_name]
+    cost = estimate_cost(processor_name)
 
     async with AsyncSessionLocal() as db:
-        # Get the run object to access org_id
-        run_result = await db.execute(
-            select(IntelligenceRun).where(IntelligenceRun.id == run_id)
-        )
-        run = run_result.scalar_one()
-        
         try:
+            # Run the processor
             await spec.handler(db, run_id)
-            
-            # Record usage and cost after successful execution
-            cost = estimate_cost(processor_name)
-            
-            await record_usage(
-                db,
-                org_id=run.org_id,
-                cost_cents=cost,
+
+            # Fetch run to get org_id (and ensure it exists)
+            run_res = await db.execute(
+                select(IntelligenceRun).where(IntelligenceRun.id == run_id)
             )
-            
+            run = run_res.scalar_one_or_none()
+            if not run:
+                return
+
+            # Record usage + persist cost on the run only after success
+            await record_usage(db, org_id=run.org_id, cost_cents=cost)
+
             await db.execute(
                 update(IntelligenceRun)
                 .where(IntelligenceRun.id == run_id)
                 .values(estimated_cost_cents=cost)
             )
             await db.commit()
-            
+
         except Exception as e:
-            await db.rollback()  # <-- important
-            
-            # Mark run failed
+            # Mark run failed; Stripe/web/etc retries are separate concerns
             await db.execute(
                 update(IntelligenceRun)
                 .where(IntelligenceRun.id == run_id)

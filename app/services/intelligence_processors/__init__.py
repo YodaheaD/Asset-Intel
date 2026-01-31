@@ -1,3 +1,4 @@
+from app.services.intelligence_processors.ocr import process_ocr_run
 from app.services.intelligence_processors.registry import ProcessorSpec
 from app.services.intelligence_processors.image_metadata import process_image_metadata_run
 from app.services.intelligence_processors.fingerprint import process_fingerprint_run
@@ -14,4 +15,10 @@ PROCESSORS["asset-fingerprint"] = ProcessorSpec(
     name="asset-fingerprint",
     version="1.0.0",
     handler=process_fingerprint_run,
+)
+# Phase 6.3 Addition
+PROCESSORS["ocr-text"] = ProcessorSpec(
+    name="ocr-text",
+    version="1.0.0",
+    handler=process_ocr_run,
 )
