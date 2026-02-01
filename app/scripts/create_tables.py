@@ -24,11 +24,16 @@ from app.models.intelligence_result import IntelligenceResult
 from app.models.org_usage import OrgUsage
 from app.models.stripe_event import StripeEvent
 
+print("Creating database tables...")
 
 async def create_all_tables() -> None:
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        print("✅ Database tables created successfully!")
+    except Exception as e:
+        print(f"❌ Failed to create database tables: {e}")
+        raise
 
 if __name__ == "__main__":
     asyncio.run(create_all_tables())
