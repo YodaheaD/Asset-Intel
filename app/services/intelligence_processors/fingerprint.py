@@ -12,6 +12,7 @@ from app.models.asset import Asset
 from app.models.intelligence_run import IntelligenceRun
 from app.models.intelligence_result import IntelligenceResult
 from app.services.fingerprint_signature_service import _signature_from_fingerprint_data
+from app.services.search_index_service import upsert_fingerprint_into_index
 
 
 async def process_fingerprint_run(db: AsyncSession, run_id: UUID) -> None:
@@ -76,15 +77,24 @@ async def process_fingerprint_run(db: AsyncSession, run_id: UUID) -> None:
     await db.commit()
 
     # Persist result
-    result = IntelligenceResult(
+    db.add(
+        IntelligenceResult(
+            org_id=run.org_id,
+            asset_id=run.asset_id,
+            run_id=run.id,
+            type="fingerprint",
+            data=data,
+            confidence=1.0,
+        )
+    )
+
+    # Phase 6.5: Upsert fingerprint into search index for dedupe queries
+    await upsert_fingerprint_into_index(
+        db,
         org_id=run.org_id,
         asset_id=run.asset_id,
-        run_id=run.id,
-        type="fingerprint",
-        data=data,
-        confidence=1.0,
+        fingerprint_data=data,
     )
-    db.add(result)
 
     # Mark completed
     await db.execute(

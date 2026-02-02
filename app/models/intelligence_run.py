@@ -69,7 +69,17 @@ class IntelligenceRun(Base):
     nullable=True,
     index=True,
     )
+    #Phase 6.11 Addition
+    retry_count: Mapped[int] = mapped_column(
+    Integer,
+    default=0,
+    nullable=False,
+    )
 
+    last_retry_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
 
 
     # Relationships

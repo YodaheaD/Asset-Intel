@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.asset import Asset
 from app.models.intelligence_run import IntelligenceRun
 from app.models.intelligence_result import IntelligenceResult
+from app.services.search_index_service import upsert_ocr_into_index
 
 
 MAX_TEXT_CHARS = 100_000
@@ -62,7 +63,7 @@ async def process_ocr_run(db: AsyncSession, run_id: UUID, lang: str = "eng") -> 
     resp.raise_for_status()
 
     content_type = (resp.headers.get("Content-Type") or "").split(";")[0].lower()
-    raw_bytes = resp.content  # <-- SAFE, seekable via BytesIO
+    raw_bytes = resp.content  # SAFE, seekable via BytesIO
 
     extracted_text = ""
     truncated = False
@@ -114,6 +115,7 @@ async def process_ocr_run(db: AsyncSession, run_id: UUID, lang: str = "eng") -> 
         "text_length": len(extracted_text),
     }
 
+    # Persist OCR result
     db.add(
         IntelligenceResult(
             org_id=run.org_id,
@@ -123,6 +125,14 @@ async def process_ocr_run(db: AsyncSession, run_id: UUID, lang: str = "eng") -> 
             data=data,
             confidence=1.0 if method == "http_text" else 0.9,
         )
+    )
+
+    # Phase 6.5: Upsert into search index for fast FTS
+    await upsert_ocr_into_index(
+        db,
+        org_id=run.org_id,
+        asset_id=run.asset_id,
+        ocr_data={"text": extracted_text},
     )
 
     # Mark completed
