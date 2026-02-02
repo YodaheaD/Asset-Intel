@@ -1,6 +1,8 @@
 # app/scripts/create_test_org.py
+
 import asyncio
 import hashlib
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -16,9 +18,10 @@ TEST_ORG_NAME = "TestOrg"
 TEST_API_KEY = "super-secret-api-key"  # Use this in X-API-Key header
 TEST_ROLE = "admin"  # owner | admin | member | service
 
-# Billing/plan defaults for the test org
+# Billing / plan defaults
 TEST_PLAN = "free"  # free | pro | team
-TEST_STRIPE_CUSTOMER_ID = None  # keep None in test unless you want to simulate
+TEST_STRIPE_CUSTOMER_ID = None
+TEST_STRIPE_SUBSCRIPTION_ID = None
 
 # -----------------------------
 # Helper functions
@@ -27,10 +30,11 @@ def hash_key(raw_key: str) -> str:
     return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
 
-def set_if_exists(obj, field: str, value):
+def set_if_exists(obj: Any, field: str, value: Any) -> None:
     """
-    Future-proof helper: only sets ORM fields that exist on the model.
-    Prevents script from breaking when models change.
+    Future-proof helper:
+    Only sets ORM fields that exist on the model.
+    Prevents this script from breaking when models evolve.
     """
     if hasattr(obj, field):
         setattr(obj, field, value)
@@ -53,25 +57,30 @@ async def main() -> None:
         if not org:
             org = Organization(name=TEST_ORG_NAME)
 
-            # Set billing-related defaults (only if those columns exist)
+            # Billing-related defaults (safe setters)
             set_if_exists(org, "plan", TEST_PLAN)
             set_if_exists(org, "stripe_customer_id", TEST_STRIPE_CUSTOMER_ID)
+            set_if_exists(org, "stripe_subscription_id", TEST_STRIPE_SUBSCRIPTION_ID)
+            set_if_exists(org, "stripe_last_event_created", None)
 
             db.add(org)
             await db.commit()
             await db.refresh(org)
-            print(f"✅ Created test organization: {org.name} (ID: {org.id})")
+
+            print(f"✅ Created test organization: {org.name}")
+            print(f"   → id: {org.id}")
         else:
-            # Optionally keep org updated if model changed
+            # Keep org aligned with current defaults if schema changed
             set_if_exists(org, "plan", TEST_PLAN)
             set_if_exists(org, "stripe_customer_id", TEST_STRIPE_CUSTOMER_ID)
+            set_if_exists(org, "stripe_subscription_id", TEST_STRIPE_SUBSCRIPTION_ID)
+
             await db.commit()
 
-            print(f"ℹ️ Organization already exists: {org.name} (ID: {org.id})")
+            print(f"ℹ️ Organization already exists: {org.name}")
+            print(f"   → id: {org.id}")
             if hasattr(org, "plan"):
-                print(f"   → plan: {getattr(org, 'plan')}")
-            if hasattr(org, "stripe_customer_id"):
-                print(f"   → stripe_customer_id: {getattr(org, 'stripe_customer_id')}")
+                print(f"   → plan: {org.plan}")
 
         # -----------------------------
         # Ensure API key exists
@@ -92,11 +101,14 @@ async def main() -> None:
             )
             db.add(api_key)
             await db.commit()
-            print(f"✅ Created API key for org '{org.name}'")
-            print(f"   → Raw key (store securely): {TEST_API_KEY}")
+
+            print("✅ Created API key")
+            print(f"   → org: {org.name}")
+            print(f"   → role: {TEST_ROLE}")
+            print(f"   → raw key (store securely): {TEST_API_KEY}")
         else:
-            print("ℹ️ API key already exists (no changes made)")
-            print(f"   → Raw key (use in X-API-Key): {TEST_API_KEY}")
+            print("ℹ️ API key already exists")
+            print(f"   → raw key (use in X-API-Key): {TEST_API_KEY}")
 
 
 # -----------------------------
