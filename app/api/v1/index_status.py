@@ -10,6 +10,7 @@ from app.api.deps import get_current_org_id
 from app.models.asset_search_index import AssetSearchIndex
 from app.models.intelligence_run import IntelligenceRun
 from app.services.indexing_workflow_service import ensure_asset_indexing
+from app.services.ocr_retry_service import classify_ocr_failure
 
 router = APIRouter()
 
@@ -49,7 +50,6 @@ async def index_status(
             ensure_ocr=True,
         )
         if not status["indexed"]:
-            # Return 202 if we started work
             return JSONResponse(
                 status_code=202,
                 content={
@@ -86,6 +86,8 @@ async def index_status(
     ).scalars().all()
 
     latest_by_proc = {}
+    latest_ocr_failure = {"category": None, "message": None}
+
     for r in runs:
         if r.processor_name not in latest_by_proc:
             latest_by_proc[r.processor_name] = {
@@ -102,6 +104,9 @@ async def index_status(
                 "last_retry_at": getattr(r, "last_retry_at", None),
             }
 
+            if r.processor_name == "ocr-text" and r.status == "failed":
+                latest_ocr_failure = classify_ocr_failure(r.error_message)
+
     return {
         "asset_id": str(asset_id),
         "index_row_exists": idx is not None,
@@ -109,5 +114,7 @@ async def index_status(
         "ocr_indexed": ocr_indexed,
         "ready_for_related": fingerprint_indexed,
         "ready_for_search": ocr_indexed,
+        "ocr_failure_category": latest_ocr_failure["category"],
+        "ocr_failure_message": latest_ocr_failure["message"],
         "latest_runs": latest_by_proc,
     }

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from uuid import UUID
+from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,14 +16,53 @@ MAX_OCR_RETRIES_PER_SIGNATURE = 2
 MIN_RETRY_DELAY_SECONDS = 60
 
 
-def _looks_like_dependency_missing(msg: str | None) -> bool:
-    if not msg:
-        return False
+def classify_ocr_failure(error_message: str | None) -> dict:
+    """
+    Returns:
+      {
+        "category": str | None,
+        "message": str | None
+      }
+
+    Categories are stable strings your UI can rely on.
+    """
+    if not error_message:
+        return {"category": None, "message": None}
+
+    msg = str(error_message)
     m = msg.lower()
-    # common OCR dependency failures
-    return (
-        "tesseract" in m and ("not found" in m or "no such file" in m or "is not installed" in m)
-    ) or ("pytesseract" in m and "import" in m) or ("pillow" in m and "import" in m)
+
+    # Dependency problems (server misconfigured)
+    if (
+        ("tesseract" in m and ("not found" in m or "no such file" in m or "is not installed" in m))
+        or ("pytesseract" in m and "import" in m)
+        or ("pillow" in m and "import" in m)
+        or ("tesseract" in m and "executable" in m)
+    ):
+        return {"category": "dependency_missing", "message": msg}
+
+    # Unsupported content type
+    if "does not support content-type" in m or "does not support content type" in m:
+        return {"category": "unsupported_content_type", "message": msg}
+
+    # Not an image / could not identify image content
+    if "could not identify image content" in m or "identify image content" in m or "not an image" in m:
+        return {"category": "not_image", "message": msg}
+
+    # Network / download issues (requests)
+    if any(x in m for x in ["timed out", "timeout", "connection", "dns", "name or service not known", "failed to establish a new connection"]):
+        return {"category": "network_error", "message": msg}
+
+    if any(x in m for x in ["404", "403", "401", "500", "502", "503", "504", "httperror"]):
+        return {"category": "http_error", "message": msg}
+
+    # Catch-all
+    return {"category": "unknown", "message": msg}
+
+
+def _looks_like_dependency_missing(msg: str | None) -> bool:
+    c = classify_ocr_failure(msg)
+    return c["category"] == "dependency_missing"
 
 
 async def should_auto_retry_ocr(
@@ -37,7 +77,9 @@ async def should_auto_retry_ocr(
         "should_retry": bool,
         "reason": str,
         "current_sig": str|None,
-        "latest_ocr_run_id": str|None
+        "latest_ocr_run_id": str|None,
+        "failure_category": str|None,
+        "failure_message": str|None,
       }
     """
     current_sig = await get_latest_fingerprint_signature(db, org_id=org_id, asset_id=asset_id)
@@ -61,7 +103,11 @@ async def should_auto_retry_ocr(
             "reason": "no_ocr_run_exists",
             "current_sig": current_sig,
             "latest_ocr_run_id": None,
+            "failure_category": None,
+            "failure_message": None,
         }
+
+    failure = classify_ocr_failure(run.error_message)
 
     if run.status != "failed":
         return {
@@ -69,6 +115,8 @@ async def should_auto_retry_ocr(
             "reason": f"latest_ocr_status_{run.status}",
             "current_sig": current_sig,
             "latest_ocr_run_id": str(run.id),
+            "failure_category": failure["category"],
+            "failure_message": failure["message"],
         }
 
     # Do not retry if failure looks like missing server dependency
@@ -78,16 +126,19 @@ async def should_auto_retry_ocr(
             "reason": "dependency_missing_no_retry",
             "current_sig": current_sig,
             "latest_ocr_run_id": str(run.id),
+            "failure_category": failure["category"],
+            "failure_message": failure["message"],
         }
 
     # Only retry if we have a current signature and it matches the failed run signature.
-    # (prevents retrying when the asset changed)
     if current_sig and run.input_fingerprint_signature and current_sig != run.input_fingerprint_signature:
         return {
             "should_retry": False,
             "reason": "asset_changed_signature_mismatch",
             "current_sig": current_sig,
             "latest_ocr_run_id": str(run.id),
+            "failure_category": failure["category"],
+            "failure_message": failure["message"],
         }
 
     # Rate limit retries
@@ -98,6 +149,8 @@ async def should_auto_retry_ocr(
                 "reason": "retry_rate_limited",
                 "current_sig": current_sig,
                 "latest_ocr_run_id": str(run.id),
+                "failure_category": failure["category"],
+                "failure_message": failure["message"],
             }
 
     # Cap retries per signature
@@ -107,6 +160,8 @@ async def should_auto_retry_ocr(
             "reason": "retry_cap_reached",
             "current_sig": current_sig,
             "latest_ocr_run_id": str(run.id),
+            "failure_category": failure["category"],
+            "failure_message": failure["message"],
         }
 
     return {
@@ -114,4 +169,6 @@ async def should_auto_retry_ocr(
         "reason": "failed_retry_allowed",
         "current_sig": current_sig,
         "latest_ocr_run_id": str(run.id),
+        "failure_category": failure["category"],
+        "failure_message": failure["message"],
     }

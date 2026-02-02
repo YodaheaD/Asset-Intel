@@ -22,6 +22,19 @@ async def ensure_asset_indexing(
     ensure_fingerprint: bool = True,
     ensure_ocr: bool = True,
 ) -> dict:
+    """
+    Ensure the asset has enough indexed data for product endpoints (related/search).
+
+    Returns:
+      {
+        "indexed": bool,
+        "queued": [...],
+        "note": str,
+        "ocr_failure_category": str|None,
+        "ocr_failure_message": str|None,
+        "ocr_retry_reason": str|None
+      }
+    """
     idx = (
         await db.execute(
             select(AssetSearchIndex).where(
@@ -62,11 +75,13 @@ async def ensure_asset_indexing(
             "indexed": False,
             "queued": queued,
             "note": "Fingerprint indexing started. Retry after completion.",
+            "ocr_failure_category": None,
+            "ocr_failure_message": None,
+            "ocr_retry_reason": None,
         }
 
     # 2) OCR if missing
     if ensure_ocr and not has_ocr:
-        # Check auto-retry logic
         decision = await should_auto_retry_ocr(db, org_id=org_id, asset_id=asset_id)
 
         # If no OCR run exists, just enqueue normally
@@ -93,6 +108,9 @@ async def ensure_asset_indexing(
                 "indexed": False,
                 "queued": queued,
                 "note": "OCR indexing started. Retry after completion.",
+                "ocr_failure_category": None,
+                "ocr_failure_message": None,
+                "ocr_retry_reason": None,
             }
 
         # If latest failed and we should retry, enqueue with retry=True
@@ -107,10 +125,8 @@ async def ensure_asset_indexing(
                 retry=True,
             )
 
-            # bump retry metadata on the NEW run (so it carries the cap state forward)
-            await db.execute(
-                select(IntelligenceRun).where(IntelligenceRun.id == run.id)
-            )
+            # Ensure ORM instance is fully loaded before mutating (safe pattern)
+            await db.refresh(run)
             run.retry_count = (run.retry_count or 0) + 1
             run.last_retry_at = datetime.utcnow()
             await db.commit()
@@ -129,17 +145,26 @@ async def ensure_asset_indexing(
                 "indexed": False,
                 "queued": queued,
                 "note": "OCR previously failed; auto-retry started. Retry after completion.",
+                "ocr_failure_category": decision.get("failure_category"),
+                "ocr_failure_message": decision.get("failure_message"),
+                "ocr_retry_reason": decision["reason"],
             }
 
-        # Otherwise do not retry, return reason
+        # Otherwise do not retry; surface classification to caller/UI
         return {
             "indexed": False,
             "queued": [],
             "note": f"OCR not indexed and auto-retry not performed ({decision['reason']}).",
+            "ocr_failure_category": decision.get("failure_category"),
+            "ocr_failure_message": decision.get("failure_message"),
             "ocr_retry_reason": decision["reason"],
         }
 
     return {
         "indexed": True,
         "queued": [],
+        "note": "Indexing ready.",
+        "ocr_failure_category": None,
+        "ocr_failure_message": None,
+        "ocr_retry_reason": None,
     }

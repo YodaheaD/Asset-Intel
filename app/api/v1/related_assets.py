@@ -32,7 +32,6 @@ async def related_assets(
             ensure_ocr=True,
         )
         if not status["indexed"]:
-            # TRUE HTTP 202
             return JSONResponse(
                 status_code=202,
                 content={
@@ -42,7 +41,6 @@ async def related_assets(
                 },
             )
 
-    # Index is ready, return related results normally (HTTP 200)
     return await find_related_assets(
         db,
         org_id=org_id,
