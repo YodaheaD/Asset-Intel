@@ -38,7 +38,6 @@ async def index_status(
         fingerprint_indexed = bool(idx.sha256 or idx.etag)
         ocr_indexed = idx.ocr_tsv is not None
 
-    # Optional auto-retry path (only if OCR missing)
     if auto_retry_ocr and not ocr_indexed:
         bg = background_tasks or BackgroundTasks()
         status = await ensure_asset_indexing(
@@ -59,7 +58,6 @@ async def index_status(
                 },
             )
 
-        # If indexed became true, re-fetch
         idx = (
             await db.execute(
                 select(AssetSearchIndex).where(
@@ -71,7 +69,6 @@ async def index_status(
         fingerprint_indexed = bool(idx and (idx.sha256 or idx.etag))
         ocr_indexed = bool(idx and (idx.ocr_tsv is not None))
 
-    # Latest runs for UI debugging/status
     runs = (
         await db.execute(
             select(IntelligenceRun)
@@ -102,6 +99,11 @@ async def index_status(
                 "input_fingerprint_signature": getattr(r, "input_fingerprint_signature", None),
                 "retry_count": getattr(r, "retry_count", 0),
                 "last_retry_at": getattr(r, "last_retry_at", None),
+                "progress": {
+                    "current": getattr(r, "progress_current", 0),
+                    "total": getattr(r, "progress_total", None),
+                    "message": getattr(r, "progress_message", None),
+                },
             }
 
             if r.processor_name == "ocr-text" and r.status == "failed":
