@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_async_db
@@ -26,6 +26,7 @@ async def cancel_run(
 async def cancel_latest_run_for_asset(
     asset_id: UUID,
     processor_name: str,
+    cascade: bool = Query(True, description="If true, cancel dependent runs (e.g., cancel OCR when fingerprint is canceled)."),
     db: AsyncSession = Depends(get_async_db),
     org_id: UUID = Depends(get_current_org_id),
 ):
@@ -33,7 +34,7 @@ async def cancel_latest_run_for_asset(
     Cancel the latest active run for an asset+processor.
     Examples:
       - POST /assets/{asset_id}/intelligence/ocr-text/cancel
-      - POST /assets/{asset_id}/intelligence/asset-fingerprint/cancel
+      - POST /assets/{asset_id}/intelligence/asset-fingerprint/cancel?cascade=true
 
     Aliases accepted (normalized):
       - ocr, ocr_text -> ocr-text
@@ -44,4 +45,5 @@ async def cancel_latest_run_for_asset(
         org_id=org_id,
         asset_id=asset_id,
         processor_name=processor_name,
+        cascade=cascade,
     )

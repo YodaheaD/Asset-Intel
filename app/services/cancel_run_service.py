@@ -18,7 +18,6 @@ def normalize_processor_name(name: str) -> str:
     Keep this conservative to avoid accidentally canceling the wrong thing.
     """
     n = (name or "").strip().lower()
-    # Allow a couple common aliases
     if n in ("ocr", "ocr_text", "ocr-text"):
         return "ocr-text"
     if n in ("fingerprint", "asset_fingerprint", "asset-fingerprint"):
@@ -57,20 +56,72 @@ async def request_cancel_run(
     return {"ok": True, "already_terminal": False, "status": run.status}
 
 
+async def _cascade_cancel_asset_runs(
+    db: AsyncSession,
+    *,
+    org_id: UUID,
+    asset_id: UUID,
+    exclude_run_id: UUID | None = None,
+    processors: list[str] | None = None,
+) -> dict:
+    """
+    Mark cancel_requested for any active runs for this asset (optionally filtered by processor).
+    Returns counts and run_ids canceled.
+    """
+    q = select(IntelligenceRun).where(
+        IntelligenceRun.org_id == org_id,
+        IntelligenceRun.asset_id == asset_id,
+        IntelligenceRun.status.not_in(tuple(TERMINAL_STATUSES)),
+    )
+
+    if processors:
+        q = q.where(IntelligenceRun.processor_name.in_(processors))
+
+    q = q.order_by(IntelligenceRun.created_at.desc()).limit(50)
+
+    runs = (await db.execute(q)).scalars().all()
+
+    canceled_ids: list[str] = []
+    for r in runs:
+        if exclude_run_id and r.id == exclude_run_id:
+            continue
+        if getattr(r, "cancel_requested", False):
+            continue
+        canceled_ids.append(str(r.id))
+
+    if not canceled_ids:
+        return {"cascaded": False, "canceled_run_ids": [], "count": 0}
+
+    # Single UPDATE for all selected run IDs
+    await db.execute(
+        update(IntelligenceRun)
+        .where(
+            IntelligenceRun.org_id == org_id,
+            IntelligenceRun.asset_id == asset_id,
+            IntelligenceRun.id.in_([UUID(x) for x in canceled_ids]),
+        )
+        .values(cancel_requested=True)
+    )
+    await db.commit()
+
+    return {"cascaded": True, "canceled_run_ids": canceled_ids, "count": len(canceled_ids)}
+
+
 async def request_cancel_latest_run_for_asset(
     db: AsyncSession,
     *,
     org_id: UUID,
     asset_id: UUID,
     processor_name: str,
+    cascade: bool = True,
 ) -> dict:
     """
     Cancel the latest non-terminal run for a given (asset_id, processor_name).
-    Returns:
-      - ok: bool
-      - run_id: str|None
-      - status: str|None
-      - error: optional
+    Optionally cascade cancellation to other dependent runs.
+
+    Cascades:
+      - If canceling asset-fingerprint and cascade=True:
+          cancel active ocr-text runs (and optionally other processors later)
     """
     proc = normalize_processor_name(processor_name)
     if not proc:
@@ -98,33 +149,42 @@ async def request_cancel_latest_run_for_asset(
             "status": None,
             "processor_name": proc,
             "asset_id": str(asset_id),
+            "cascade": cascade,
         }
 
-    # If already requested, return idempotently
-    if getattr(run, "cancel_requested", False):
-        return {
-            "ok": True,
-            "already_requested": True,
-            "run_id": str(run.id),
-            "status": run.status,
-            "processor_name": proc,
-            "asset_id": str(asset_id),
-        }
+    # Idempotent: if already requested, still allow cascade to be applied
+    already_requested = bool(getattr(run, "cancel_requested", False))
 
-    await db.execute(
-        update(IntelligenceRun)
-        .where(IntelligenceRun.id == run.id)
-        .values(cancel_requested=True)
-    )
-    await db.commit()
+    if not already_requested:
+        await db.execute(
+            update(IntelligenceRun)
+            .where(IntelligenceRun.id == run.id)
+            .values(cancel_requested=True)
+        )
+        await db.commit()
+
+    cascade_info = {"cascaded": False, "canceled_run_ids": [], "count": 0}
+
+    if cascade:
+        # Only fingerprint cancellation cascades by default
+        if proc == "asset-fingerprint":
+            cascade_info = await _cascade_cancel_asset_runs(
+                db,
+                org_id=org_id,
+                asset_id=asset_id,
+                exclude_run_id=run.id,
+                processors=["ocr-text"],
+            )
 
     return {
         "ok": True,
-        "already_requested": False,
+        "already_requested": already_requested,
         "run_id": str(run.id),
         "status": run.status,
         "processor_name": proc,
         "asset_id": str(asset_id),
+        "cascade": cascade,
+        "cascade_result": cascade_info,
     }
 
 
