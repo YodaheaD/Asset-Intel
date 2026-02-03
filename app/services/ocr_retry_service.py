@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta
 from uuid import UUID
-from typing import Optional
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,7 +10,6 @@ from app.models.intelligence_run import IntelligenceRun
 from app.services.fingerprint_signature_service import get_latest_fingerprint_signature
 
 
-# Tune these
 MAX_OCR_RETRIES_PER_SIGNATURE = 2
 MIN_RETRY_DELAY_SECONDS = 60
 
@@ -19,12 +17,17 @@ MIN_RETRY_DELAY_SECONDS = 60
 def classify_ocr_failure(error_message: str | None) -> dict:
     """
     Returns:
-      {
-        "category": str | None,
-        "message": str | None
-      }
+      { "category": str|None, "message": str|None }
 
-    Categories are stable strings your UI can rely on.
+    Stable categories for UI:
+      - dependency_missing
+      - unsupported_content_type
+      - not_image
+      - network_error
+      - http_error
+      - pdf_dependency_missing
+      - pdf_rasterize_failed
+      - unknown
     """
     if not error_message:
         return {"category": None, "message": None}
@@ -32,7 +35,15 @@ def classify_ocr_failure(error_message: str | None) -> dict:
     msg = str(error_message)
     m = msg.lower()
 
-    # Dependency problems (server misconfigured)
+    # PDF-specific dependency issues
+    if "pdf2image" in m and ("requires" in m or "import" in m):
+        return {"category": "pdf_dependency_missing", "message": msg}
+    if "poppler" in m and ("missing" in m or "not found" in m or "unable" in m or "failed" in m):
+        return {"category": "pdf_dependency_missing", "message": msg}
+    if "rasterize pdf" in m or "failed to rasterize pdf" in m:
+        return {"category": "pdf_rasterize_failed", "message": msg}
+
+    # Dependency problems (tesseract/pytesseract/pillow)
     if (
         ("tesseract" in m and ("not found" in m or "no such file" in m or "is not installed" in m))
         or ("pytesseract" in m and "import" in m)
@@ -46,23 +57,23 @@ def classify_ocr_failure(error_message: str | None) -> dict:
         return {"category": "unsupported_content_type", "message": msg}
 
     # Not an image / could not identify image content
-    if "could not identify image content" in m or "identify image content" in m or "not an image" in m:
+    if "could not identify image" in m or "identify image content" in m or "not an image" in m:
         return {"category": "not_image", "message": msg}
 
-    # Network / download issues (requests)
+    # Network issues
     if any(x in m for x in ["timed out", "timeout", "connection", "dns", "name or service not known", "failed to establish a new connection"]):
         return {"category": "network_error", "message": msg}
 
+    # HTTP-ish errors
     if any(x in m for x in ["404", "403", "401", "500", "502", "503", "504", "httperror"]):
         return {"category": "http_error", "message": msg}
 
-    # Catch-all
     return {"category": "unknown", "message": msg}
 
 
 def _looks_like_dependency_missing(msg: str | None) -> bool:
     c = classify_ocr_failure(msg)
-    return c["category"] == "dependency_missing"
+    return c["category"] in ("dependency_missing", "pdf_dependency_missing")
 
 
 async def should_auto_retry_ocr(
@@ -84,7 +95,6 @@ async def should_auto_retry_ocr(
     """
     current_sig = await get_latest_fingerprint_signature(db, org_id=org_id, asset_id=asset_id)
 
-    # Find latest OCR run (any status)
     res = await db.execute(
         select(IntelligenceRun)
         .where(
@@ -119,7 +129,7 @@ async def should_auto_retry_ocr(
             "failure_message": failure["message"],
         }
 
-    # Do not retry if failure looks like missing server dependency
+    # Do not retry if failure is dependency-related (tesseract/poppler/pdf2image missing)
     if _looks_like_dependency_missing(run.error_message):
         return {
             "should_retry": False,
@@ -130,7 +140,6 @@ async def should_auto_retry_ocr(
             "failure_message": failure["message"],
         }
 
-    # Only retry if we have a current signature and it matches the failed run signature.
     if current_sig and run.input_fingerprint_signature and current_sig != run.input_fingerprint_signature:
         return {
             "should_retry": False,
@@ -141,7 +150,6 @@ async def should_auto_retry_ocr(
             "failure_message": failure["message"],
         }
 
-    # Rate limit retries
     if run.last_retry_at:
         if datetime.utcnow() - run.last_retry_at < timedelta(seconds=MIN_RETRY_DELAY_SECONDS):
             return {
@@ -153,7 +161,6 @@ async def should_auto_retry_ocr(
                 "failure_message": failure["message"],
             }
 
-    # Cap retries per signature
     if (run.retry_count or 0) >= MAX_OCR_RETRIES_PER_SIGNATURE:
         return {
             "should_retry": False,
