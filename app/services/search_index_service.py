@@ -24,7 +24,7 @@ async def upsert_fingerprint_into_index(
     asset_id: UUID,
     fingerprint_data: dict[str, Any],
 ) -> None:
-    stmt = insert(AssetSearchIndex).values(
+    insert_stmt = insert(AssetSearchIndex).values(
         org_id=org_id,
         asset_id=asset_id,
         sha256=fingerprint_data.get("sha256"),
@@ -32,14 +32,15 @@ async def upsert_fingerprint_into_index(
         content_type=fingerprint_data.get("content_type"),
         last_modified=fingerprint_data.get("last_modified"),
         updated_at=datetime.utcnow(),
-    ).on_conflict_do_update(
+    )
+    stmt = insert_stmt.on_conflict_do_update(
         index_elements=[AssetSearchIndex.org_id, AssetSearchIndex.asset_id],
         set_={
-            "sha256": stmt.excluded.sha256,
-            "etag": stmt.excluded.etag,
-            "content_type": stmt.excluded.content_type,
-            "last_modified": stmt.excluded.last_modified,
-            "updated_at": stmt.excluded.updated_at,
+            "sha256": insert_stmt.excluded.sha256,
+            "etag": insert_stmt.excluded.etag,
+            "content_type": insert_stmt.excluded.content_type,
+            "last_modified": insert_stmt.excluded.last_modified,
+            "updated_at": insert_stmt.excluded.updated_at,
         },
     )
 
@@ -58,18 +59,19 @@ async def upsert_ocr_into_index(
     preview = _preview(text, 1000)
 
     # We store preview + a tsvector generated from the full text (truncated upstream)
-    stmt = insert(AssetSearchIndex).values(
+    insert_stmt = insert(AssetSearchIndex).values(
         org_id=org_id,
         asset_id=asset_id,
         ocr_text_preview=preview,
         ocr_tsv=func.to_tsvector("english", text),
         updated_at=datetime.utcnow(),
-    ).on_conflict_do_update(
+    )
+    stmt = insert_stmt.on_conflict_do_update(
         index_elements=[AssetSearchIndex.org_id, AssetSearchIndex.asset_id],
         set_={
-            "ocr_text_preview": stmt.excluded.ocr_text_preview,
-            "ocr_tsv": stmt.excluded.ocr_tsv,
-            "updated_at": stmt.excluded.updated_at,
+            "ocr_text_preview": insert_stmt.excluded.ocr_text_preview,
+            "ocr_tsv": insert_stmt.excluded.ocr_tsv,
+            "updated_at": insert_stmt.excluded.updated_at,
         },
     )
 

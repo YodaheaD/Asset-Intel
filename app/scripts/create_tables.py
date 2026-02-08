@@ -23,6 +23,7 @@ from app.models.intelligence_run import IntelligenceRun
 from app.models.intelligence_result import IntelligenceResult
 from app.models.org_usage import OrgUsage
 from app.models.stripe_event import StripeEvent
+from app.models.asset_search_index import AssetSearchIndex
 
 print("Creating database tables...")
 
